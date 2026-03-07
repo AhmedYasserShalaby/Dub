@@ -1,0 +1,560 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dub Downloader</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #0f1115;
+            /* Deep dark background */
+            color: #e2e8f0;
+            margin: 0;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow-x: hidden;
+        }
+
+        /* Ambient Glow Background */
+        .ambient-bg {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            z-index: -1;
+            overflow: hidden;
+            background: radial-gradient(circle at 15% 50%, rgba(99, 102, 241, 0.15), transparent 25%),
+                radial-gradient(circle at 85% 30%, rgba(168, 85, 247, 0.15), transparent 25%);
+        }
+
+        /* Glassmorphism Panel */
+        .glass-panel {
+            background: rgba(30, 41, 59, 0.6);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+            border-radius: 1.5rem;
+        }
+
+        /* Gradient Text */
+        .text-gradient {
+            background: linear-gradient(135deg, #a855f7 0%, #6366f1 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        /* Custom Input */
+        .custom-input {
+            background: rgba(15, 23, 42, 0.5);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: white;
+            transition: all 0.3s ease;
+        }
+
+        .custom-input:focus {
+            outline: none;
+            border-color: #8b5cf6;
+            box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.2);
+            background: rgba(15, 23, 42, 0.8);
+        }
+
+        /* Premium Button */
+        .btn-premium {
+            background: linear-gradient(135deg, #8b5cf6 0%, #6366f1 100%);
+            color: white;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            box-shadow: 0 4px 14px 0 rgba(139, 92, 246, 0.39);
+        }
+
+        .btn-premium:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(139, 92, 246, 0.5);
+            filter: brightness(1.1);
+        }
+
+        .btn-premium:active {
+            transform: translateY(0);
+        }
+
+        .btn-premium:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        /* Terminal Viewer */
+        .terminal-container {
+            background-color: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 0.75rem;
+            font-family: 'JetBrains Mono', 'Menlo', 'Monaco', 'Courier New', monospace;
+            font-size: 0.875rem;
+            color: #c9d1d9;
+            overflow-y: auto;
+            max-height: 400px;
+            scroll-behavior: smooth;
+            box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.5);
+        }
+
+        /* Scrollbar styling for terminal */
+        .terminal-container::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        .terminal-container::-webkit-scrollbar-track {
+            background: #0d1117;
+            border-radius: 0.75rem;
+        }
+
+        .terminal-container::-webkit-scrollbar-thumb {
+            background: #30363d;
+            border-radius: 0.75rem;
+        }
+
+        .terminal-container::-webkit-scrollbar-thumb:hover {
+            background: #484f58;
+        }
+
+        /* Pulse animation for active state */
+        @keyframes pulse-border {
+            0% {
+                border-color: rgba(139, 92, 246, 0.3);
+            }
+
+            50% {
+                border-color: rgba(139, 92, 246, 0.8);
+            }
+
+            100% {
+                border-color: rgba(139, 92, 246, 0.3);
+            }
+        }
+
+        .active-process {
+            animation: pulse-border 2s infinite;
+        }
+
+        .progress-track {
+            background: rgba(148, 163, 184, 0.18);
+        }
+
+        .progress-fill {
+            background: linear-gradient(90deg, #22c55e 0%, #14b8a6 45%, #3b82f6 100%);
+            transition: width 0.4s ease;
+        }
+    </style>
+</head>
+
+<body class="antialiased">
+
+    <div class="ambient-bg"></div>
+
+    <main class="flex-grow flex flex-col items-center justify-center p-6 sm:p-12 w-full max-w-4xl mx-auto z-10">
+
+        <!-- Header -->
+        <div class="text-center mb-10 w-full animate-[fadeIn_0.5s_ease-out]">
+            <div
+                class="inline-flex items-center justify-center p-3 bg-purple-500/10 rounded-2xl mb-4 border border-purple-500/20">
+                <i data-lucide="mic" class="w-8 h-8 text-purple-400"></i>
+            </div>
+            <h1 class="text-4xl sm:text-5xl font-bold mb-3 tracking-tight">
+                Dub <span class="text-gradient">Downloader</span>
+            </h1>
+            <p class="text-slate-400 text-lg max-w-lg mx-auto">
+                Easily download and dub your courses locally. Enter the URL below to begin the magical pipeline.
+            </p>
+        </div>
+
+        <!-- Main Card -->
+        <div id="main-card" class="glass-panel w-full p-6 sm:p-8 transition-all duration-500">
+            <div
+                class="text-sm text-yellow-500/90 mb-4 flex items-center gap-2 bg-yellow-500/10 p-3 rounded-lg border border-yellow-500/20">
+                <i data-lucide="alert-triangle" class="w-4 h-4"></i>
+                Please ensure you are currently logged into the course site using the browser you select below.
+            </div>
+
+            <form id="dub-form" class="mb-4">
+                <div class="flex flex-col sm:flex-row gap-4 mb-2">
+                    <div class="relative flex-grow">
+                        <div class="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                            <i data-lucide="link" class="w-5 h-5 text-slate-400"></i>
+                        </div>
+                        <input type="url" id="course-url" name="url"
+                            class="custom-input w-full py-4 pl-12 pr-4 rounded-xl text-lg placeholder-slate-500"
+                            placeholder="https://course.fp-platform.online/learn/..." required>
+                    </div>
+                    <div class="relative w-full sm:w-48 flex-shrink-0">
+                        <div class="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                            <i data-lucide="chrome" class="w-5 h-5 text-slate-400"></i>
+                        </div>
+                        <select id="browser-select"
+                            class="custom-input w-full py-4 pl-12 pr-4 rounded-xl text-lg appearance-none cursor-pointer">
+                            <option value="chrome">Chrome</option>
+                            <option value="safari">Safari</option>
+                            <option value="firefox">Firefox</option>
+                            <option value="edge">Edge</option>
+                            <option value="brave">Brave</option>
+                            <option value="opera">Opera</option>
+                            <option value="chromium">Chromium</option>
+                        </select>
+                    </div>
+                    <button type="submit" id="submit-btn"
+                        class="btn-premium flex items-center justify-center gap-2 py-4 px-8 rounded-xl font-semibold text-lg whitespace-nowrap">
+                        <i data-lucide="download" class="w-5 h-5"></i>
+                        Start Dubbing
+                    </button>
+                </div>
+                <div class="flex flex-col sm:flex-row gap-4">
+                    <div class="relative w-full sm:w-52 flex-shrink-0">
+                        <div class="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                            <i data-lucide="bot" class="w-5 h-5 text-slate-400"></i>
+                        </div>
+                        <select id="extractor-mode-select"
+                            class="custom-input w-full py-4 pl-12 pr-4 rounded-xl text-lg appearance-none cursor-pointer">
+                            <option value="hybrid">Hybrid Extractor</option>
+                            <option value="auto">Automatic Only</option>
+                            <option value="interactive">Interactive Only</option>
+                        </select>
+                    </div>
+                    <div class="relative w-full sm:w-52 flex-shrink-0">
+                        <div class="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                            <i data-lucide="layers" class="w-5 h-5 text-slate-400"></i>
+                        </div>
+                        <select id="platform-select"
+                            class="custom-input w-full py-4 pl-12 pr-4 rounded-xl text-lg appearance-none cursor-pointer">
+                            <option value="auto">Auto Detect Platform</option>
+                            <option value="getcourse">Force GetCourse</option>
+                            <option value="generic">Force Generic</option>
+                            <option value="fp-platform">Force FP-Platform</option>
+                        </select>
+                    </div>
+                </div>
+            </form>
+
+            <!-- Status Indicator (Hidden initially) -->
+            <div id="status-container"
+                class="hidden flex items-center gap-3 mb-4 px-4 py-3 bg-slate-800/50 rounded-lg border border-slate-700">
+                <div id="status-dot" class="w-3 h-3 rounded-full bg-blue-500 animate-pulse"></div>
+                <span id="status-text" class="text-sm font-medium text-slate-300">Ready</span>
+            </div>
+
+            <section id="progress-panel" class="hidden mb-4 rounded-2xl border border-slate-700 bg-slate-900/50 p-4">
+                <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                        <div id="progress-course-name" class="text-sm font-semibold text-slate-100">No active run</div>
+                        <div id="progress-course-meta" class="text-xs text-slate-400">Waiting for a workflow to start</div>
+                    </div>
+                    <div class="text-right">
+                        <div id="progress-percent" class="text-2xl font-semibold text-white">0%</div>
+                        <div id="progress-summary" class="text-xs text-slate-400">No videos yet</div>
+                    </div>
+                </div>
+                <div class="progress-track mt-3 h-3 overflow-hidden rounded-full">
+                    <div id="progress-fill" class="progress-fill h-full w-0 rounded-full"></div>
+                </div>
+                <div class="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-5">
+                    <div class="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+                        <div class="text-xs text-slate-400">Queued</div>
+                        <div id="metric-queued" class="mt-1 text-lg font-semibold text-white">0</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+                        <div class="text-xs text-slate-400">Downloading</div>
+                        <div id="metric-downloading" class="mt-1 text-lg font-semibold text-cyan-300">0</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+                        <div class="text-xs text-slate-400">Queued Dub</div>
+                        <div id="metric-queued-dub" class="mt-1 text-lg font-semibold text-amber-300">0</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+                        <div class="text-xs text-slate-400">Dubbing</div>
+                        <div id="metric-dubbing" class="mt-1 text-lg font-semibold text-fuchsia-300">0</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+                        <div class="text-xs text-slate-400">Done / Failed</div>
+                        <div id="metric-done-failed" class="mt-1 text-lg font-semibold text-emerald-300">0 / 0</div>
+                    </div>
+                </div>
+                <div class="mt-4 overflow-hidden rounded-xl border border-slate-800">
+                    <div class="grid grid-cols-[minmax(0,1fr)_120px] gap-3 bg-slate-950/70 px-4 py-3 text-xs uppercase tracking-wide text-slate-400">
+                        <div>Video</div>
+                        <div>Status</div>
+                    </div>
+                    <div id="progress-video-list" class="divide-y divide-slate-800 bg-slate-950/40">
+                        <div class="px-4 py-4 text-sm text-slate-500">No workflow progress yet.</div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Terminal Output -->
+            <div class="relative group">
+                <div class="absolute top-0 right-0 p-3 flex gap-2">
+                    <div class="w-3 h-3 rounded-full bg-slate-600"></div>
+                    <div class="w-3 h-3 rounded-full bg-slate-600"></div>
+                    <div class="w-3 h-3 rounded-full bg-slate-600"></div>
+                </div>
+                <div id="terminal" class="terminal-container p-5 pt-10 h-80 flex flex-col gap-1">
+                    <div class="text-slate-500">Waiting for process to start...</div>
+                </div>
+            </div>
+
+        </div>
+    </main>
+
+    <footer class="py-6 text-center text-slate-500 text-sm z-10">
+        <p>Local Host Pipeline UI for <span class="font-semibold text-slate-400">FP-Platform</span></p>
+    </footer>
+
+    <script>
+        // Initialize Icons
+        lucide.createIcons();
+
+        const form = document.getElementById('dub-form');
+        const urlInput = document.getElementById('course-url');
+        const browserSelect = document.getElementById('browser-select');
+        const extractorModeSelect = document.getElementById('extractor-mode-select');
+        const platformSelect = document.getElementById('platform-select');
+        const submitBtn = document.getElementById('submit-btn');
+        const terminal = document.getElementById('terminal');
+        const statusContainer = document.getElementById('status-container');
+        const statusText = document.getElementById('status-text');
+        const statusDot = document.getElementById('status-dot');
+        const mainCard = document.getElementById('main-card');
+        const progressPanel = document.getElementById('progress-panel');
+        const progressCourseName = document.getElementById('progress-course-name');
+        const progressCourseMeta = document.getElementById('progress-course-meta');
+        const progressPercent = document.getElementById('progress-percent');
+        const progressSummary = document.getElementById('progress-summary');
+        const progressFill = document.getElementById('progress-fill');
+        const metricQueued = document.getElementById('metric-queued');
+        const metricDownloading = document.getElementById('metric-downloading');
+        const metricQueuedDub = document.getElementById('metric-queued-dub');
+        const metricDubbing = document.getElementById('metric-dubbing');
+        const metricDoneFailed = document.getElementById('metric-done-failed');
+        const progressVideoList = document.getElementById('progress-video-list');
+
+        let eventSource = null;
+        let progressPoll = null;
+
+        function appendLog(message, isError = false) {
+            const line = document.createElement('div');
+
+            // Basic syntax highlighting/colors for terminal logs
+            if (isError || message.toLowerCase().includes('error') || message.toLowerCase().includes('failed')) {
+                line.className = 'text-red-400';
+            } else if (message.includes('[dubbed]') || message.includes('success')) {
+                line.className = 'text-green-400';
+            } else if (
+                message.includes('Interactive browser fallback') ||
+                message.includes('click') ||
+                message.includes('Play')
+            ) {
+                line.className = 'text-yellow-400 font-semibold animate-pulse';
+            } else if (message.startsWith('[')) {
+                line.className = 'text-blue-300';
+            }
+
+            line.textContent = message;
+            terminal.appendChild(line);
+
+            // Auto-scroll to bottom
+            terminal.scrollTop = terminal.scrollHeight;
+        }
+
+        function setStatus(state, message) {
+            statusContainer.classList.remove('hidden');
+            statusText.textContent = message;
+
+            statusDot.className = 'w-3 h-3 rounded-full'; // reset
+            mainCard.classList.remove('active-process');
+
+            if (state === 'running') {
+                statusDot.classList.add('bg-purple-500', 'animate-pulse');
+                mainCard.classList.add('active-process');
+                submitBtn.disabled = true;
+                submitBtn.innerHTML = '<i data-lucide="loader-2" class="w-5 h-5 animate-spin"></i> Processing...';
+            } else if (state === 'success') {
+                statusDot.classList.add('bg-green-500');
+                submitBtn.disabled = false;
+                submitBtn.innerHTML = '<i data-lucide="download" class="w-5 h-5"></i> Start Dubbing';
+            } else if (state === 'error') {
+                statusDot.classList.add('bg-red-500');
+                submitBtn.disabled = false;
+                submitBtn.innerHTML = '<i data-lucide="alert-circle" class="w-5 h-5"></i> Try Again';
+            }
+            lucide.createIcons();
+        }
+
+        function statusBadgeClass(status) {
+            if (status === 'dubbed' || status === 'skipped_existing_dub') return 'text-emerald-300';
+            if (status === 'dubbing') return 'text-fuchsia-300';
+            if (status === 'queued_dub') return 'text-amber-300';
+            if (status === 'downloading') return 'text-cyan-300';
+            if (status === 'failed_download' || status === 'failed_dub') return 'text-red-300';
+            return 'text-slate-300';
+        }
+
+        function updateProgressPanel(payload) {
+            progressPanel.classList.remove('hidden');
+
+            if (!payload.has_run) {
+                progressCourseName.textContent = 'No active run';
+                progressCourseMeta.textContent = payload.process_running ? 'Waiting for state file...' : 'Start a workflow to see progress';
+                progressPercent.textContent = '0%';
+                progressSummary.textContent = 'No videos yet';
+                progressFill.style.width = '0%';
+                metricQueued.textContent = '0';
+                metricDownloading.textContent = '0';
+                metricQueuedDub.textContent = '0';
+                metricDubbing.textContent = '0';
+                metricDoneFailed.textContent = '0 / 0';
+                progressVideoList.innerHTML = '<div class="px-4 py-4 text-sm text-slate-500">No workflow progress yet.</div>';
+                return;
+            }
+
+            const summary = payload.summary || {};
+            const queued = (summary.queued_download || 0);
+            progressCourseName.textContent = payload.course_name || payload.course_slug || 'Active workflow';
+            progressCourseMeta.textContent = payload.process_running
+                ? `${payload.course_slug || ''} is running`
+                : `${payload.course_slug || ''} is idle`;
+            progressPercent.textContent = `${payload.progress_percent || 0}%`;
+            progressSummary.textContent = `${summary.done || 0} done, ${summary.downloading || 0} downloading, ${summary.dubbing || 0} dubbing`;
+            progressFill.style.width = `${payload.progress_percent || 0}%`;
+            metricQueued.textContent = String(queued);
+            metricDownloading.textContent = String(summary.downloading || 0);
+            metricQueuedDub.textContent = String(summary.queued_dub || 0);
+            metricDubbing.textContent = String(summary.dubbing || 0);
+            metricDoneFailed.textContent = `${summary.done || 0} / ${summary.failed || 0}`;
+
+            const rows = (payload.videos || []).map((video) => {
+                const errorHtml = video.error
+                    ? `<div class="mt-1 text-xs text-red-300">${video.error}</div>`
+                    : '';
+                return `
+                    <div class="grid grid-cols-[minmax(0,1fr)_120px] gap-3 px-4 py-3 text-sm">
+                        <div class="min-w-0">
+                            <div class="truncate text-slate-100">${video.lesson_title}</div>
+                            ${errorHtml}
+                        </div>
+                        <div class="${statusBadgeClass(video.status)} font-medium">${video.status}</div>
+                    </div>
+                `;
+            });
+            progressVideoList.innerHTML = rows.join('') || '<div class="px-4 py-4 text-sm text-slate-500">No videos discovered yet.</div>';
+        }
+
+        async function refreshProgress() {
+            try {
+                const response = await fetch('/api/progress');
+                if (!response.ok) return;
+                const payload = await response.json();
+                updateProgressPanel(payload);
+            } catch (error) {
+                console.error('Progress fetch failed', error);
+            }
+        }
+
+        function startProgressPolling() {
+            if (progressPoll) {
+                clearInterval(progressPoll);
+            }
+            refreshProgress();
+            progressPoll = setInterval(refreshProgress, 2000);
+        }
+
+        function connectSSE() {
+            if (eventSource) {
+                eventSource.close();
+            }
+
+            eventSource = new EventSource('/api/stream');
+
+            eventSource.onmessage = function (event) {
+                const data = event.data;
+                appendLog(data);
+
+                // Very basic heuristic to check if done based on log message
+                if (data.includes('Process exited')) {
+                    if (data.includes('code 0')) {
+                        setStatus('success', 'Dubbing complete!');
+                    } else {
+                        setStatus('error', 'Process failed. Check logs.');
+                    }
+                    refreshProgress();
+                    eventSource.close();
+                }
+            };
+
+            eventSource.onerror = function (err) {
+                console.error("SSE Error:", err);
+                eventSource.close();
+            };
+        }
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const url = urlInput.value.trim();
+            const browser = browserSelect.value;
+            const extractor_mode = extractorModeSelect.value;
+            const platform = platformSelect.value;
+            if (!url) return;
+
+            // UI Feedback
+            terminal.innerHTML = ''; // clear terminal
+            setStatus('running', 'Initializing python pipeline...');
+
+            try {
+                const response = await fetch('/api/dub', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ url, browser, extractor_mode, platform })
+                });
+
+                const data = await response.json();
+
+                if (data.status === 'error') {
+                    appendLog('Server Error: ' + data.message, true);
+                    setStatus('error', 'Failed to start');
+                    return;
+                }
+
+                // If started successfully, connect to the log stream
+                connectSSE();
+                startProgressPolling();
+                setStatus('running', 'Downloading & Dubbing (check logs below)');
+
+            } catch (err) {
+                appendLog('Network Error: ' + err.message, true);
+                setStatus('error', 'Network failure');
+            }
+        });
+
+        // Initialize animation keyframes for tailwind since we use arbitrary values
+        const style = document.createElement('style');
+        style.textContent = `
+            @keyframes fadeIn {
+                from { opacity: 0; transform: translateY(10px); }
+                to { opacity: 1; transform: translateY(0); }
+            }
+        `;
+        document.head.appendChild(style);
+        startProgressPolling();
+    </script>
+</body>
+
+</html>

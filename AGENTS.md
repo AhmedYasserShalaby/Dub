@@ -16,8 +16,18 @@ Keep this workspace predictable for course-level Arabic dubbing runs:
 - Translation fallback: Google Translate when DeepL is rate-limited or quota-limited
 - Spoken rewrite default: phrase-first spoken Arabic rewrite
 - Spoken style default: Egyptian spoken Arabic
-- Adaptive pacing default: keep original speed unless auto slowdown is needed
-- Max dub speed default: `1.5x`
+- Preferred polished pacing recipe:
+  - normal timed speech by default
+  - shorten only dense Arabic lines when needed
+  - allow mild selective collision speed-up, not global speed-up
+  - allow some local drift before fitting
+  - if a lesson is still too dense, use a small global video slowdown
+- Current polished anti-swelling recipe:
+  - `--timed-rate +0%`
+  - `--video-slowdown 1.40`
+  - `--timed-max-late-drift-ms 2200`
+  - `--timed-collision-max-speed 1.38`
+  - `--use-reviewed-arabic`
 
 ## Output structure (required)
 - Single-video lesson finals: `courses/<course-slug>/<lesson-position>-<lesson-title>.arabic-dub.mp4`
@@ -33,8 +43,10 @@ Do not write `manifest/` or `lessons/` inside `courses/<course-slug>/`.
 - For final delivery, prefer non-sped timed output and avoid chunked mode unless explicitly requested.
 - Do not collapse multi-video lessons into a single final filename.
 - If old ambiguous single-file outputs exist for multi-video lessons, move them into `.course_work/<course-slug>/legacy_migrated/final_outputs/` before writing new finals.
-- Treat `--video-slowdown` as an exception for problem lessons, not the default path.
-- Prefer the original foot-healing-style timed dub flow unless a user explicitly asks for experimental timing changes.
+- For dense lessons, prefer rewriting dense Arabic lines before increasing speed caps.
+- Prefer selective timed fitting over global dub speed-up.
+- If a user wants a separate tuning pass, use `--course-slug-suffix` so outputs go into a separate course folder instead of overwriting the base run.
+- Keep course folders clean: final MP4s only. Put manifests, review files, caches, and debug artifacts under `.course_work/<course-slug>/`.
 
 ## Common commands
 ```bash
@@ -46,11 +58,17 @@ python course_pipeline.py --course-url "<COURSE_URL>" --browser chrome
 # Keep intermediate working files for debugging
 python course_pipeline.py --course-url "<COURSE_URL>" --browser chrome --keep-work
 
-# Timed default with manual slowdown only if explicitly requested
+# Polished natural-sync style run in a separate variant folder
 python course_pipeline.py \
   --course-url "<COURSE_URL>" \
   --browser chrome \
-  --timed-rate "+0%"
+  --course-slug-suffix natural-sync \
+  --timed-rate "+0%" \
+  --video-slowdown 1.40 \
+  --timed-max-late-drift-ms 2200 \
+  --timed-collision-max-speed 1.38 \
+  --use-reviewed-arabic \
+  --keep-work
 ```
 
 ## Migration guideline

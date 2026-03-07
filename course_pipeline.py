@@ -33,6 +33,8 @@ from dub import (
 )
 
 
+from universal_extractor import detect_platform, extract_course_manifest
+
 DOTENV_PATH = PROJECT_ROOT / ".env"
 COURSE_TTS_DEFAULT_STRATEGY = "timed"
 ITEMS_FIELDS = """{
@@ -86,6 +88,10 @@ PLAYER_URL_RE = re.compile(r"https://v\.xlsite\.ai/v/[A-Za-z0-9_-]+(?:\?[^\s\"'>
 STREAM_URL_RE = re.compile(r"url:\s*['\"]([^'\"]+master\.m3u8[^'\"]*)['\"]")
 TITLE_RE = re.compile(r"<title>(.*?)</title>", re.IGNORECASE | re.DOTALL)
 LEARN_ID_RE = re.compile(r"/learn/([A-Za-z0-9_-]+)")
+REQUIRED_DUB_SPEED_RE = re.compile(
+    r"Dub would require ([0-9]+(?:\.[0-9]+)?)x speed, above the allowed max of ([0-9]+(?:\.[0-9]+)?)x",
+    re.IGNORECASE,
+)
 
 
 load_dotenv(DOTENV_PATH)
@@ -101,17 +107,40 @@ class CourseVideo:
     player_url: str
     stream_url: str
     stream_title: str
-    referer: str = "https://v.xlsite.ai/"
+    referer: str = ""
+    download_url: str = ""
+    source_kind: str = "stream"
+    extractor_strategy: str = ""
+    subtitle_url: str = ""
+    subtitle_language: str = ""
 
     @property
     def key(self) -> str:
         return f"{self.lesson_position:03d}-{self.lesson_id}-video-{self.video_position:02d}"
+
+    @property
+    def resolved_download_url(self) -> str:
+        return self.download_url or self.stream_url
+
+    @property
+    def resolved_referer(self) -> str:
+        return self.referer or self.player_url or self.lesson_url or "https://v.xlsite.ai/"
 
 
 def run(cmd: list[str], cwd: Path | None = None) -> None:
     result = subprocess.run(cmd, cwd=cwd, text=True)
     if result.returncode != 0:
         raise RuntimeError(f"Command failed: {' '.join(cmd)}")
+
+
+def run_capture_result(cmd: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        cmd,
+        cwd=cwd,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
 
 
 def run_capture(cmd: list[str], cwd: Path | None = None) -> str:
@@ -300,6 +329,10 @@ class FPPlatformAdapter:
                         player_url=player_url,
                         stream_url=stream_url,
                         stream_title=stream_title,
+                        referer=lesson_url,
+                        download_url=stream_url,
+                        source_kind="stream",
+                        extractor_strategy="fp-platform-api",
                     )
                 )
 
@@ -355,6 +388,28 @@ def build_format_selector(max_video_height: int) -> str:
     return "bestvideo+bestaudio/best"
 
 
+def build_download_attempts(args: argparse.Namespace) -> list[dict[str, int]]:
+    attempts: list[dict[str, int]] = []
+    seen: set[tuple[int, int]] = set()
+    configs = [
+        (int(args.max_video_height), int(args.yt_concurrent_fragments)),
+        (480 if int(args.max_video_height or 0) != 480 else int(args.max_video_height), 4),
+        (360, 2),
+    ]
+    for max_height, fragments in configs:
+        key = (max_height, fragments)
+        if key in seen:
+            continue
+        seen.add(key)
+        attempts.append(
+            {
+                "max_video_height": max_height,
+                "concurrent_fragments": max(1, fragments),
+            }
+        )
+    return attempts
+
+
 def download_video(
     video: CourseVideo,
     browser: str,
@@ -372,7 +427,7 @@ def download_video(
         "--cookies-from-browser",
         browser,
         "--referer",
-        video.referer,
+        video.resolved_referer,
         "--concurrent-fragments",
         str(concurrent_fragments),
         "--merge-output-format",
@@ -382,12 +437,18 @@ def download_video(
         "--write-info-json",
         "-o",
         output_template,
-        video.stream_url,
+        video.resolved_download_url,
     ]
-    run(cmd)
+    try:
+        run(cmd)
+    except Exception as exc:
+        media_files = find_media_files(source_dir)
+        if media_files:
+            return media_files[-1]
+        raise RuntimeError(f"{exc}") from exc
     media_files = find_media_files(source_dir)
     if not media_files:
-        raise RuntimeError(f"No media file downloaded for {video.stream_url}")
+        raise RuntimeError(f"No media file downloaded for {video.resolved_download_url}")
     return media_files[-1]
 
 
@@ -398,6 +459,11 @@ def build_video_state(video: CourseVideo) -> dict[str, Any]:
         "lesson_url": video.lesson_url,
         "player_url": video.player_url,
         "stream_url": video.stream_url,
+        "download_url": video.resolved_download_url,
+        "source_kind": video.source_kind,
+        "extractor_strategy": video.extractor_strategy,
+        "subtitle_url": video.subtitle_url,
+        "subtitle_language": video.subtitle_language,
     }
 
 
@@ -486,9 +552,13 @@ def prepare_source_video(
 ) -> Path:
     video_dir = lesson_video_dir(work_root, video)
     inputs_dir = ensure_dir(video_dir / "inputs")
+    source_dir = ensure_dir(video_dir / "source")
 
     if args.force_redownload and inputs_dir.exists():
         for item in inputs_dir.iterdir():
+            if item.is_file():
+                item.unlink()
+        for item in source_dir.iterdir():
             if item.is_file():
                 item.unlink()
 
@@ -496,18 +566,121 @@ def prepare_source_video(
     if source_files and not args.force_redownload:
         return source_files[-1]
 
-    source_video = download_video(
-        video,
-        args.browser,
-        video_dir,
-        args.yt_concurrent_fragments,
-        args.max_video_height,
-    )
+    downloaded_source_files = find_media_files(source_dir)
+    if downloaded_source_files and not args.force_redownload:
+        source_video = downloaded_source_files[-1]
+        target = inputs_dir / source_video.name
+        if source_video != target:
+            shutil.copy2(source_video, target)
+            source_video = target
+        return source_video
+
+    attempt_configs = build_download_attempts(args)
+    max_attempts = max(args.download_retries, len(attempt_configs))
+    last_error: Exception | None = None
+    for attempt in range(1, max_attempts + 1):
+        config = attempt_configs[min(attempt - 1, len(attempt_configs) - 1)]
+        try:
+            if attempt > 1:
+                print(
+                    f"[download_retry] {video.lesson_title} "
+                    f"height={config['max_video_height']} "
+                    f"fragments={config['concurrent_fragments']}"
+                )
+            source_video = download_video(
+                video,
+                args.browser,
+                video_dir,
+                config["concurrent_fragments"],
+                config["max_video_height"],
+            )
+            last_error = None
+            break
+        except Exception as exc:
+            last_error = exc
+            if attempt == max_attempts:
+                raise
+            print(
+                f"Retrying download for {video.lesson_title} "
+                f"({attempt}/{max_attempts - 1} retries used)..."
+            )
+            time.sleep(args.retry_wait_seconds)
+
+    if last_error is not None:
+        raise last_error
+
     if source_video.parent != inputs_dir:
         target = inputs_dir / source_video.name
         shutil.copy2(source_video, target)
         source_video = target
     return source_video
+
+
+def convert_webvtt_to_srt(vtt_text: str) -> str:
+    lines = [line.rstrip("\n") for line in vtt_text.replace("\r\n", "\n").split("\n")]
+    cues: list[tuple[str, list[str]]] = []
+    current_time: str | None = None
+    current_text: list[str] = []
+
+    for raw_line in lines:
+        line = raw_line.strip("\ufeff")
+        if not line or line == "WEBVTT" or line.startswith(("NOTE", "STYLE", "REGION")):
+            if current_time and current_text:
+                cues.append((current_time, current_text))
+                current_time = None
+                current_text = []
+            continue
+        if "-->" in line:
+            if current_time and current_text:
+                cues.append((current_time, current_text))
+                current_text = []
+            current_time = line.replace(".", ",")
+            continue
+        if current_time:
+            current_text.append(line)
+
+    if current_time and current_text:
+        cues.append((current_time, current_text))
+
+    output_lines: list[str] = []
+    for index, (timing, text_lines) in enumerate(cues, start=1):
+        output_lines.append(str(index))
+        output_lines.append(timing)
+        output_lines.extend(text_lines)
+        output_lines.append("")
+    return "\n".join(output_lines).strip() + "\n"
+
+
+def ensure_english_subtitles(video: CourseVideo, video_dir: Path) -> None:
+    if not video.subtitle_url:
+        return
+    outputs_dir = ensure_dir(video_dir / "outputs")
+    english_srt = outputs_dir / "english.srt"
+    if english_srt.exists():
+        return
+    response = requests.get(video.subtitle_url, timeout=30, headers={"User-Agent": "Mozilla/5.0"})
+    response.raise_for_status()
+    english_srt.write_text(convert_webvtt_to_srt(response.text), encoding="utf-8")
+
+
+def build_dub_attempts(args: argparse.Namespace) -> list[dict[str, float]]:
+    attempts: list[dict[str, float]] = [
+        {
+            "video_slowdown": float(args.video_slowdown),
+            "timed_collision_max_speed": float(args.timed_collision_max_speed),
+        }
+    ]
+    max_auto_slowdown = max(float(args.video_slowdown), 2.0)
+    slowdown = float(args.video_slowdown)
+    while slowdown + 0.099 < max_auto_slowdown:
+        slowdown = round(slowdown + 0.10, 2)
+        attempts.append(
+            {
+                "video_slowdown": slowdown,
+                "timed_collision_max_speed": float(args.timed_collision_max_speed),
+            }
+        )
+    return attempts
 
 
 def dub_video(
@@ -523,64 +696,93 @@ def dub_video(
     state = build_video_state(video)
     final_video = final_video_path(course_output_dir, video, lesson_video_counts)
 
+    ensure_english_subtitles(video, video_dir)
+
     if final_video.exists() and not args.force_redub:
         state["status"] = "skipped_existing_dub"
         state["final_video"] = str(final_video)
         return state
 
-    dub_cmd = [
-        sys.executable,
-        str(PROJECT_ROOT / "dub.py"),
-        "--input",
-        str(source_video),
-        "--project-dir",
-        str(video_dir),
-        "--voice",
-        args.voice,
-        "--model",
-        args.model,
-        "--deepl-api-key",
-        args.deepl_api_key,
-        "--tts-strategy",
-        args.tts_strategy,
-        "--narration-rate",
-        args.narration_rate,
-        "--timed-rate",
-        args.timed_rate,
-        "--video-slowdown",
-        str(args.video_slowdown),
-        "--max-dub-speed",
-        str(args.max_dub_speed),
-        "--dub-gain",
-        str(args.dub_gain),
-        "--bg-gain-db",
-        str(args.bg_gain_db),
-        "--tts-concurrency",
-        str(args.tts_concurrency),
-        "--chunk-max-chars",
-        str(args.chunk_max_chars),
-        "--timed-max-late-drift-ms",
-        str(args.timed_max_late_drift_ms),
-        "--timed-collision-max-speed",
-        str(args.timed_collision_max_speed),
-    ]
-    if args.use_reviewed_arabic:
-        dub_cmd.append("--use-reviewed-arabic")
-    if args.deepl_api_url:
-        dub_cmd.extend(["--deepl-api-url", args.deepl_api_url])
+    attempt_configs = build_dub_attempts(args)
+    max_attempts = max(args.dub_retries, len(attempt_configs))
     last_error: Exception | None = None
-    for attempt in range(1, args.dub_retries + 1):
+    current_collision_speed = float(args.timed_collision_max_speed)
+    for attempt in range(1, max_attempts + 1):
+        config = attempt_configs[min(attempt - 1, len(attempt_configs) - 1)].copy()
+        config["timed_collision_max_speed"] = current_collision_speed
+        dub_cmd = [
+            sys.executable,
+            str(PROJECT_ROOT / "dub.py"),
+            "--input",
+            str(source_video),
+            "--project-dir",
+            str(video_dir),
+            "--voice",
+            args.voice,
+            "--model",
+            args.model,
+            "--deepl-api-key",
+            args.deepl_api_key,
+            "--tts-strategy",
+            args.tts_strategy,
+            "--narration-rate",
+            args.narration_rate,
+            "--timed-rate",
+            args.timed_rate,
+            "--video-slowdown",
+            str(config["video_slowdown"]),
+            "--max-dub-speed",
+            str(args.max_dub_speed),
+            "--dub-gain",
+            str(args.dub_gain),
+            "--bg-gain-db",
+            str(args.bg_gain_db),
+            "--tts-concurrency",
+            str(args.tts_concurrency),
+            "--chunk-max-chars",
+            str(args.chunk_max_chars),
+            "--timed-max-late-drift-ms",
+            str(args.timed_max_late_drift_ms),
+            "--timed-collision-max-speed",
+            str(config["timed_collision_max_speed"]),
+        ]
+        if args.use_reviewed_arabic:
+            dub_cmd.append("--use-reviewed-arabic")
+        if args.deepl_api_url:
+            dub_cmd.extend(["--deepl-api-url", args.deepl_api_url])
         try:
-            run(dub_cmd, cwd=PROJECT_ROOT)
+            if attempt > 1:
+                print(
+                    f"[dub_retry] {video.lesson_title} "
+                    f"slowdown={config['video_slowdown']:.2f} "
+                    f"collision_max={config['timed_collision_max_speed']:.2f}"
+                )
+            result = run_capture_result(dub_cmd, cwd=PROJECT_ROOT)
+            if result.stdout:
+                print(result.stdout, end="" if result.stdout.endswith("\n") else "\n")
+            if result.returncode != 0:
+                error_output = "\n".join(
+                    part for part in [result.stderr.strip(), result.stdout.strip()] if part
+                ).strip()
+                raise RuntimeError(error_output or f"Command failed: {' '.join(dub_cmd)}")
             last_error = None
             break
         except Exception as exc:
             last_error = exc
-            if attempt == args.dub_retries:
+            error_text = str(exc)
+            speed_match = REQUIRED_DUB_SPEED_RE.search(error_text)
+            if speed_match:
+                required_speed = float(speed_match.group(1))
+                if required_speed <= args.max_dub_speed:
+                    current_collision_speed = max(
+                        current_collision_speed,
+                        min(args.max_dub_speed, round(required_speed + 0.05, 2)),
+                    )
+            if attempt == max_attempts:
                 raise
             print(
                 f"Retrying dub for {video.lesson_title} "
-                f"({attempt}/{args.dub_retries - 1} retries used)..."
+                f"({attempt}/{max_attempts - 1} retries used)..."
             )
             time.sleep(args.retry_wait_seconds)
 
@@ -778,6 +980,12 @@ def main() -> None:
         help="Number of dub attempts per lesson before marking it failed",
     )
     parser.add_argument(
+        "--download-retries",
+        type=int,
+        default=3,
+        help="Number of download attempts per lesson before marking it failed",
+    )
+    parser.add_argument(
         "--retry-wait-seconds",
         type=int,
         default=5,
@@ -789,6 +997,35 @@ def main() -> None:
         dest="clean_work",
         help="Keep per-video working folders under .course_work",
     )
+    parser.add_argument(
+        "--extractor-mode",
+        choices=("hybrid", "auto", "interactive"),
+        default="hybrid",
+        help="Non-FP extraction mode: automatic first, interactive only, or hybrid fallback",
+    )
+    parser.add_argument(
+        "--platform",
+        choices=("auto", "fp-platform", "getcourse", "generic"),
+        default="auto",
+        help="Force a platform adapter or auto-detect from the URL",
+    )
+    parser.add_argument(
+        "--extract-timeout-seconds",
+        type=int,
+        default=45,
+        help="Timeout for direct extraction/network resolution attempts",
+    )
+    parser.add_argument(
+        "--manual-play-timeout-seconds",
+        type=int,
+        default=180,
+        help="How long the interactive browser fallback waits for media activity",
+    )
+    parser.add_argument(
+        "--save-extraction-debug",
+        action="store_true",
+        help="Always keep extraction diagnostics under .course_work/<course-slug>/extraction",
+    )
     parser.set_defaults(clean_work=True)
     args = parser.parse_args()
     args.only_lessons = parse_filter_list(args.only_lessons)
@@ -797,11 +1034,41 @@ def main() -> None:
     if not args.deepl_api_key:
         raise SystemExit("Missing DeepL API key. Set DEEPL_API_KEY in .env or pass --deepl-api-key.")
 
-    adapter = FPPlatformAdapter(args.course_url, args.browser)
-    manifest = adapter.discover()
+    detected_platform = detect_platform(args.course_url) if args.platform == "auto" else args.platform
+
+    # Determine extraction strategy based on URL domain
+    if detected_platform == "fp-platform":
+        adapter = FPPlatformAdapter(args.course_url, args.browser)
+        manifest = adapter.discover()
+    else:
+        preview_slug = slugify(urlparse(args.course_url).netloc or "course")
+        preview_work_dir = args.project_dir.resolve() / ".course_work" / preview_slug
+        debug_dir = preview_work_dir / "extraction"
+        print(
+            f"Non FP-Platform URL detected ({detected_platform}). "
+            f"Starting {args.extractor_mode} universal extraction for {args.course_url}"
+        )
+        manifest = extract_course_manifest(
+            args.course_url,
+            browser=args.browser,
+            mode=args.extractor_mode,
+            platform=detected_platform,
+            extract_timeout_seconds=args.extract_timeout_seconds,
+            manual_play_timeout_seconds=args.manual_play_timeout_seconds,
+            debug_dir=debug_dir if args.save_extraction_debug or detected_platform != "fp-platform" else None,
+        )
 
     effective_course_slug = with_course_suffix(manifest["course_slug"], args.course_slug_suffix)
     paths = course_paths(args.project_dir.resolve(), effective_course_slug)
+    if detected_platform != "fp-platform" and debug_dir.exists() and paths["work"] != preview_work_dir:
+        ensure_dir(paths["work"])
+        target_debug_dir = paths["work"] / "extraction"
+        if target_debug_dir.exists():
+            shutil.rmtree(target_debug_dir, ignore_errors=True)
+        shutil.move(str(debug_dir), str(target_debug_dir))
+        if preview_work_dir.exists() and not any(preview_work_dir.iterdir()):
+            preview_work_dir.rmdir()
+        print(f"[extractor] saved diagnostics to {target_debug_dir}")
     manifest_path = paths["work"] / "course_manifest.json"
     state_path = paths["work"] / "run_state.json"
     manifest["course_slug"] = effective_course_slug

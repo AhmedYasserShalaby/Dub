@@ -154,20 +154,43 @@ def apply_glossary(text: str, glossary: dict[str, str]) -> str:
 
 
 def extract_audio(video_path: Path, wav_path: Path) -> None:
-    run(
-        [
-            "ffmpeg",
-            "-y",
-            "-i",
-            str(video_path),
-            "-vn",
-            "-ac",
-            "1",
-            "-ar",
-            "16000",
-            str(wav_path),
-        ]
-    )
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        str(video_path),
+        "-vn",
+        "-ac",
+        "1",
+        "-ar",
+        "16000",
+        str(wav_path),
+    ]
+    try:
+        run(cmd)
+    except Exception as exc:
+        error_text = str(exc).lower()
+        if "does not contain any stream" not in error_text and "stream map" not in error_text:
+            raise
+        duration_seconds = max(0.1, probe_duration_ms(video_path) / 1000)
+        print("Source video has no audio track. Creating silent background audio...")
+        run(
+            [
+                "ffmpeg",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                f"anullsrc=r={SAMPLE_RATE}:cl=mono",
+                "-t",
+                f"{duration_seconds:.3f}",
+                "-ac",
+                "1",
+                "-ar",
+                str(SAMPLE_RATE),
+                str(wav_path),
+            ]
+        )
 
 
 def find_sidecar_audio(video_path: Path) -> Path | None:
