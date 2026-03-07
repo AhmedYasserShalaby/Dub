@@ -1,0 +1,14 @@
+.env
+__pycache__/
+.course_work/
+.venv/
+courses/
+outputs/
+work/
+inputs/
+*.mp4
+*.wav
+*.json
+!metadata.json
+!package.json
+.DS_Store
