@@ -24,9 +24,9 @@ Keep this workspace predictable for course-level Arabic dubbing runs:
   - if a lesson is still too dense, use a small global video slowdown
 - Current polished anti-swelling recipe:
   - `--timed-rate +0%`
-  - `--video-slowdown 1.40`
-  - `--timed-max-late-drift-ms 2200`
-  - `--timed-collision-max-speed 1.38`
+  - `--video-slowdown 1.10`
+  - `--timed-max-late-drift-ms 1700`
+  - `--timed-collision-max-speed 1.22`
   - `--use-reviewed-arabic`
 
 ## Output structure (required)
@@ -35,6 +35,7 @@ Keep this workspace predictable for course-level Arabic dubbing runs:
 - Working files and run metadata: `.course_work/<course-slug>/`
 
 Do not write `manifest/` or `lessons/` inside `courses/<course-slug>/`.
+Do not leave any finished MP4 inside `.course_work/`; once a dub is complete, move or write the final MP4 into `courses/<course-slug>/` immediately.
 
 ## Runtime rules
 - Load config from `.env` in repo root.
@@ -47,6 +48,7 @@ Do not write `manifest/` or `lessons/` inside `courses/<course-slug>/`.
 - Prefer selective timed fitting over global dub speed-up.
 - If a user wants a separate tuning pass, use `--course-slug-suffix` so outputs go into a separate course folder instead of overwriting the base run.
 - Keep course folders clean: final MP4s only. Put manifests, review files, caches, and debug artifacts under `.course_work/<course-slug>/`.
+- For ad hoc single-video runs, create a visible folder under `courses/` for the final MP4 and keep subtitles, WAVs, caches, and review files under `.course_work/`.
 
 ## Common commands
 ```bash
@@ -64,9 +66,9 @@ python course_pipeline.py \
   --browser chrome \
   --course-slug-suffix natural-sync \
   --timed-rate "+0%" \
-  --video-slowdown 1.40 \
-  --timed-max-late-drift-ms 2200 \
-  --timed-collision-max-speed 1.38 \
+  --video-slowdown 1.10 \
+  --timed-max-late-drift-ms 1700 \
+  --timed-collision-max-speed 1.22 \
   --use-reviewed-arabic \
   --keep-work
 ```

@@ -1,0 +1,15 @@
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+exclude = [".venv", ".course_work", ".orchestrator", "courses", "outputs", "work", "inputs"]
+
+[tool.ruff.lint]
+select = ["F"]
+
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true
+follow_imports = "skip"
+warn_unused_ignores = true
+pretty = true
+exclude = '(^\.venv/|^\.course_work/|^\.orchestrator/|^courses/|^outputs/|^work/|^inputs/)'

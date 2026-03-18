@@ -241,6 +241,10 @@
                         </select>
                     </div>
                 </div>
+                <label class="mt-4 flex items-center gap-3 rounded-xl border border-slate-800 bg-slate-950/40 px-4 py-3 text-sm text-slate-300">
+                    <input id="auto-repair-checkbox" type="checkbox" checked class="h-4 w-4 rounded border-slate-600 bg-slate-900 text-emerald-400 focus:ring-emerald-400">
+                    <span>Auto-run Codex repair loop if the course workflow fails</span>
+                </label>
             </form>
 
             <!-- Status Indicator (Hidden initially) -->
@@ -297,6 +301,19 @@
                 </div>
             </section>
 
+            <section id="repair-panel" class="hidden mb-4 rounded-2xl border border-emerald-800/60 bg-emerald-950/20 p-4">
+                <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                        <div class="text-sm font-semibold text-emerald-200">Auto Repair</div>
+                        <div id="repair-meta" class="text-xs text-emerald-100/70">Waiting for repair status</div>
+                    </div>
+                    <div class="text-right">
+                        <div id="repair-status" class="text-lg font-semibold text-white">idle</div>
+                        <div id="repair-iteration" class="text-xs text-emerald-100/70">0 / 0</div>
+                    </div>
+                </div>
+            </section>
+
             <!-- Terminal Output -->
             <div class="relative group">
                 <div class="absolute top-0 right-0 p-3 flex gap-2">
@@ -325,6 +342,7 @@
         const browserSelect = document.getElementById('browser-select');
         const extractorModeSelect = document.getElementById('extractor-mode-select');
         const platformSelect = document.getElementById('platform-select');
+        const autoRepairCheckbox = document.getElementById('auto-repair-checkbox');
         const submitBtn = document.getElementById('submit-btn');
         const terminal = document.getElementById('terminal');
         const statusContainer = document.getElementById('status-container');
@@ -343,9 +361,75 @@
         const metricDubbing = document.getElementById('metric-dubbing');
         const metricDoneFailed = document.getElementById('metric-done-failed');
         const progressVideoList = document.getElementById('progress-video-list');
+        const repairPanel = document.getElementById('repair-panel');
+        const repairMeta = document.getElementById('repair-meta');
+        const repairStatus = document.getElementById('repair-status');
+        const repairIteration = document.getElementById('repair-iteration');
 
         let eventSource = null;
         let progressPoll = null;
+        let currentSessionId = null;
+        let currentProgressUrl = null;
+        let currentStreamUrl = null;
+        const sessionStorageKey = 'dub-downloader.session-id';
+
+        function buildSessionUrls(sessionId) {
+            if (!sessionId) {
+                return { progressUrl: null, streamUrl: null };
+            }
+            return {
+                progressUrl: `/api/sessions/${sessionId}/progress`,
+                streamUrl: `/api/sessions/${sessionId}/stream`,
+            };
+        }
+
+        function persistSessionId(sessionId) {
+            try {
+                if (sessionId) {
+                    window.localStorage.setItem(sessionStorageKey, sessionId);
+                } else {
+                    window.localStorage.removeItem(sessionStorageKey);
+                }
+            } catch (error) {
+                console.warn('Failed to persist session id', error);
+            }
+        }
+
+        function readPersistedSessionId() {
+            try {
+                return window.localStorage.getItem(sessionStorageKey);
+            } catch (error) {
+                console.warn('Failed to read persisted session id', error);
+                return null;
+            }
+        }
+
+        function readSessionIdFromUrl() {
+            return new URL(window.location.href).searchParams.get('session_id');
+        }
+
+        function syncSessionIdInUrl(sessionId) {
+            const url = new URL(window.location.href);
+            if (sessionId) {
+                url.searchParams.set('session_id', sessionId);
+            } else {
+                url.searchParams.delete('session_id');
+            }
+            window.history.replaceState({}, '', url);
+        }
+
+        function setActiveSession(sessionId, { persist = true, updateUrl = true } = {}) {
+            currentSessionId = sessionId || null;
+            const urls = buildSessionUrls(currentSessionId);
+            currentProgressUrl = urls.progressUrl;
+            currentStreamUrl = urls.streamUrl;
+            if (persist) {
+                persistSessionId(currentSessionId);
+            }
+            if (updateUrl) {
+                syncSessionIdInUrl(currentSessionId);
+            }
+        }
 
         function appendLog(message, isError = false) {
             const line = document.createElement('div');
@@ -407,6 +491,22 @@
 
         function updateProgressPanel(payload) {
             progressPanel.classList.remove('hidden');
+            const repair = payload.repair || {};
+
+            if (payload.session_id && payload.session_id !== currentSessionId) {
+                setActiveSession(payload.session_id, { persist: true, updateUrl: false });
+            }
+
+            if (repair.enabled) {
+                repairPanel.classList.remove('hidden');
+                repairMeta.textContent = repair.job_id
+                    ? `Job ${repair.job_id}${repair.last_reason ? ` - ${repair.last_reason}` : ''}`
+                    : (repair.active ? 'Repair loop is running' : 'Auto repair is armed');
+                repairStatus.textContent = repair.status || (repair.active ? 'running' : 'waiting');
+                repairIteration.textContent = `${repair.iteration || 0} / ${repair.max_iterations || 0}`;
+            } else {
+                repairPanel.classList.add('hidden');
+            }
 
             if (!payload.has_run) {
                 progressCourseName.textContent = 'No active run';
@@ -427,8 +527,8 @@
             const queued = (summary.queued_download || 0);
             progressCourseName.textContent = payload.course_name || payload.course_slug || 'Active workflow';
             progressCourseMeta.textContent = payload.process_running
-                ? `${payload.course_slug || ''} is running`
-                : `${payload.course_slug || ''} is idle`;
+                ? `${payload.course_slug || ''} is running${payload.session_id ? ` · session ${payload.session_id}` : ''}`
+                : `${payload.course_slug || ''} is idle${payload.session_id ? ` · session ${payload.session_id}` : ''}`;
             progressPercent.textContent = `${payload.progress_percent || 0}%`;
             progressSummary.textContent = `${summary.done || 0} done, ${summary.downloading || 0} downloading, ${summary.dubbing || 0} dubbing`;
             progressFill.style.width = `${payload.progress_percent || 0}%`;
@@ -455,45 +555,63 @@
             progressVideoList.innerHTML = rows.join('') || '<div class="px-4 py-4 text-sm text-slate-500">No videos discovered yet.</div>';
         }
 
-        async function refreshProgress() {
+        async function refreshProgress(progressUrl) {
+            if (!progressUrl) return;
             try {
-                const response = await fetch('/api/progress');
-                if (!response.ok) return;
+                const response = await fetch(progressUrl);
+                if (!response.ok) return null;
                 const payload = await response.json();
                 updateProgressPanel(payload);
+                return payload;
             } catch (error) {
                 console.error('Progress fetch failed', error);
+                return null;
             }
         }
 
-        function startProgressPolling() {
+        function startProgressPolling(progressUrl) {
             if (progressPoll) {
                 clearInterval(progressPoll);
             }
-            refreshProgress();
-            progressPoll = setInterval(refreshProgress, 2000);
+            if (!progressUrl) return;
+            refreshProgress(progressUrl);
+            progressPoll = setInterval(() => refreshProgress(progressUrl), 2000);
         }
 
-        function connectSSE() {
+        function connectSSE(streamUrl) {
             if (eventSource) {
                 eventSource.close();
             }
 
-            eventSource = new EventSource('/api/stream');
+            if (!streamUrl) return;
 
-            eventSource.onmessage = function (event) {
+            eventSource = new EventSource(streamUrl);
+
+            eventSource.onmessage = async function (event) {
                 const data = event.data;
                 appendLog(data);
 
-                // Very basic heuristic to check if done based on log message
                 if (data.includes('Process exited')) {
-                    if (data.includes('code 0')) {
-                        setStatus('success', 'Dubbing complete!');
-                    } else {
-                        setStatus('error', 'Process failed. Check logs.');
+                    await refreshProgress(currentProgressUrl);
+                    try {
+                        const response = await fetch(currentProgressUrl);
+                        if (!response.ok) return;
+                        const payload = await response.json();
+                        updateProgressPanel(payload);
+                        if (!payload.process_running) {
+                            const repair = payload.repair || {};
+                            if (repair.enabled && repair.status === 'success') {
+                                setStatus('success', 'Repair loop completed successfully.');
+                            } else if ((payload.summary?.failed || 0) === 0 && data.includes('code 0')) {
+                                setStatus('success', 'Dubbing complete!');
+                            } else {
+                                setStatus('error', 'Process failed. Check logs.');
+                            }
+                            eventSource.close();
+                        }
+                    } catch (error) {
+                        console.error('Progress refresh after exit failed', error);
                     }
-                    refreshProgress();
-                    eventSource.close();
                 }
             };
 
@@ -501,6 +619,40 @@
                 console.error("SSE Error:", err);
                 eventSource.close();
             };
+        }
+
+        async function loadLatestSessionPreview() {
+            try {
+                const preferredSessionId = readSessionIdFromUrl() || readPersistedSessionId();
+                if (preferredSessionId) {
+                    const { progressUrl } = buildSessionUrls(preferredSessionId);
+                    const response = await fetch(progressUrl);
+                    if (response.ok) {
+                        setActiveSession(preferredSessionId, { persist: true, updateUrl: true });
+                        const payload = await response.json();
+                        updateProgressPanel(payload);
+                        if (payload.process_running) {
+                            startProgressPolling(currentProgressUrl);
+                            connectSSE(currentStreamUrl);
+                        }
+                        return;
+                    }
+                }
+
+                const response = await fetch('/api/sessions');
+                if (!response.ok) return;
+                const sessions = await response.json();
+                const latest = Array.isArray(sessions) ? sessions[0] : null;
+                if (!latest || !latest.session_id) return;
+                setActiveSession(latest.session_id, { persist: true, updateUrl: true });
+                const payload = await refreshProgress(currentProgressUrl);
+                if (payload?.process_running) {
+                    startProgressPolling(currentProgressUrl);
+                    connectSSE(currentStreamUrl);
+                }
+            } catch (error) {
+                console.error('Failed to load latest session preview', error);
+            }
         }
 
         form.addEventListener('submit', async (e) => {
@@ -522,7 +674,7 @@
                     headers: {
                         'Content-Type': 'application/json'
                     },
-                    body: JSON.stringify({ url, browser, extractor_mode, platform })
+                    body: JSON.stringify({ url, browser, extractor_mode, platform, auto_repair: autoRepairCheckbox.checked })
                 });
 
                 const data = await response.json();
@@ -533,10 +685,16 @@
                     return;
                 }
 
+                setActiveSession(data.session_id || null, { persist: true, updateUrl: true });
+                if (data.progress_url || data.stream_url) {
+                    currentProgressUrl = data.progress_url || currentProgressUrl;
+                    currentStreamUrl = data.stream_url || currentStreamUrl;
+                }
+
                 // If started successfully, connect to the log stream
-                connectSSE();
-                startProgressPolling();
-                setStatus('running', 'Downloading & Dubbing (check logs below)');
+                connectSSE(currentStreamUrl);
+                startProgressPolling(currentProgressUrl);
+                setStatus('running', currentSessionId ? `Downloading & Dubbing session ${currentSessionId}` : 'Downloading & Dubbing (check logs below)');
 
             } catch (err) {
                 appendLog('Network Error: ' + err.message, true);
@@ -553,7 +711,7 @@
             }
         `;
         document.head.appendChild(style);
-        startProgressPolling();
+        loadLatestSessionPreview();
     </script>
 </body>
 

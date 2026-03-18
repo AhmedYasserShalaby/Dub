@@ -1,6 +1,7 @@
 .env
 __pycache__/
 .course_work/
+.orchestrator/
 .venv/
 courses/
 outputs/
@@ -11,4 +12,8 @@ inputs/
 *.json
 !metadata.json
 !package.json
+!tests/fixtures/*.mp4
+!tests/fixtures/*.wav
+.mypy_cache/
+.ruff_cache/
 .DS_Store

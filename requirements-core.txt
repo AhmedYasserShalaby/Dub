@@ -1,0 +1,14 @@
+aiofiles==25.1.0
+browser-cookie3==0.20.1
+certifi==2026.2.25
+chardet==5.2.0
+charset-normalizer==3.4.5
+deep-translator==1.11.4
+edge-tts==7.2.7
+fastapi==0.135.1
+idna==3.11
+pysrt==1.1.2
+requests==2.32.5
+sse-starlette==3.3.2
+urllib3==2.5.0
+uvicorn==0.41.0

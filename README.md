@@ -7,17 +7,19 @@ End-to-end Arabic dubbing workspace for course videos.
 - Downloads a full course from the supported platform with `yt-dlp`
 - Reuses your logged-in browser cookies for access
 - Transcribes English audio with `mlx-whisper`
-- Translates to Arabic with DeepL
-- Generates Arabic dub audio with `ar-EG-ShakirNeural`
+- Translates to Arabic with DeepL when available, or Google Translate automatically
+- Auto-selects a course voice from Arabic neural candidates and persists it under `.course_work/`
 - Muxes the Arabic dub back into each lesson video
 
 ## Current default quality/speed strategy
 
-- Translation: DeepL only
-- Voice: `ar-EG-ShakirNeural`
+- Translation: `auto` (`DeepL -> Google fallback`, or Google when no DeepL key is set)
+- Voice: automatic course-level selection, starting from Egyptian voices
 - Dubbing mode: `timed`
 - Timed speaking rate: `+0%` (no speed-up)
-- Mix defaults: dub gain `2.6`, background `-24dB`
+- Quality profile: `natural`
+- Polished pacing defaults: `--video-slowdown 1.10`, `--timed-max-late-drift-ms 1700`, `--timed-collision-max-speed 1.22`
+- Mix defaults: speech-priority ducking with dubbed voice sidechained over the source audio
 
 `timed` is now the default for better sync and more natural pacing, with no forced speed-up.
 
@@ -33,7 +35,7 @@ cp .env.example .env
 
 Then edit `.env` and fill in:
 
-- `DEEPL_API_KEY`
+- optionally `DEEPL_API_KEY`
 - optionally `DEEPL_API_URL` (usually not needed; endpoint is auto-detected from your key)
 - optionally `DEFAULT_BROWSER`
 - optionally `DEFAULT_ARABIC_VOICE`
@@ -50,14 +52,17 @@ python course_pipeline.py \
   --browser chrome
 ```
 
-If you want to enforce exact natural timed speed explicitly:
+If you want to make the natural profile explicit:
 
 ```bash
 python course_pipeline.py \
   --course-url "PASTE_COURSE_URL_HERE" \
   --browser chrome \
-  --tts-strategy timed \
-  --timed-rate "+0%"
+  --quality-profile natural \
+  --timed-rate "+0%" \
+  --video-slowdown 1.10 \
+  --timed-max-late-drift-ms 1700 \
+  --timed-collision-max-speed 1.22
 ```
 
 This will create a per-course folder under:
@@ -68,11 +73,12 @@ courses/<course-slug>/
 
 Inside it, you will get final videos directly (flat output):
 
-- `<lesson-title>.arabic-dub.mp4`
-- `<another-lesson>.arabic-dub.mp4`
+- `<lesson-position>-<lesson-title>.arabic-dub.mp4`
+- `<lesson-position>-<lesson-title>.v01.arabic-dub.mp4` for multi-video lessons
 
 Working folders are written under `.course_work/<course-slug>/` and are deleted after each successful video by default.
-Use `--keep-work` if you want to keep those intermediate files for debugging.
+Use `--keep-work` if you want to keep those intermediate files for debugging; final MP4s still stay in `courses/<course-slug>/`.
+Each video work folder now also includes `quality_diagnostics.json`, and the selected course voice is saved in `.course_work/<course-slug>/voice_selection.json`.
 
 ## Single-video pipeline
 
@@ -83,9 +89,16 @@ cd /Users/ahmedyasser/Documents/Dub
 source .venv/bin/activate
 python dub.py \
   --input "/path/to/video.mp4" \
+  --course-slug "my-ad-hoc-run" \
+  --lesson-position 1 \
+  --lesson-title "My Lesson" \
   --voice ar-EG-ShakirNeural \
-  --tts-strategy chunked
+  --tts-strategy timed \
+  --translation-provider auto \
+  --quality-profile natural
 ```
+
+That writes the final MP4 to `courses/my-ad-hoc-run/01-my-lesson.arabic-dub.mp4` and keeps subtitles, WAVs, caches, and review files under `.course_work/my-ad-hoc-run/`.
 
 If the source has separate audio:
 
@@ -94,7 +107,9 @@ python dub.py \
   --input "/path/to/video.mp4" \
   --audio-input "/path/to/audio.mp4" \
   --voice ar-EG-ShakirNeural \
-  --tts-strategy chunked
+  --tts-strategy timed \
+  --translation-provider auto \
+  --quality-profile natural
 ```
 
 ## Review-first workflow
@@ -140,7 +155,9 @@ python voice_samples.py \
 python course_pipeline.py \
   --course-url "PASTE_COURSE_URL_HERE" \
   --browser chrome \
-  --tts-strategy chunked \
+  --disable-auto-select-voice \
+  --quality-profile manual \
+  --video-slowdown 1.0 \
   --tts-concurrency 4 \
   --yt-concurrent-fragments 8
 ```
@@ -152,3 +169,27 @@ python course_pipeline.py \
 - `tts_only.py`: direct Arabic narration generation from script text
 - `voice_samples.py`: quick voice comparison generator
 - `glossary.csv`: post-translation terminology replacements
+- `orchestrate.py`: terminal supervisor that drives a local Codex worker loop
+
+## Terminal Orchestrator
+
+Use the local Codex CLI as a worker agent and let the supervisor verify and retry automatically:
+
+```bash
+cd /Users/ahmedyasser/Documents/Dub
+source .venv/bin/activate
+python orchestrate.py run \
+  --goal "Make course dubbing work for any supported input course URL" \
+  --verify "python -m unittest tests.test_universal_extractor tests.test_orchestrate" \
+  --verify "python course_pipeline.py --help"
+```
+
+Useful follow-up commands:
+
+```bash
+python orchestrate.py status
+python orchestrate.py logs --last 1
+python orchestrate.py resume --force
+```
+
+The supervisor stores its own artifacts in `.orchestrator/runs/` and keeps course output folders unchanged.

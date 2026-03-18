@@ -2,15 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import re
 import shutil
 import subprocess
-import tempfile
 from dataclasses import asdict, dataclass
 from html import unescape
 from pathlib import Path
-from typing import Any, Iterable, Optional
+from typing import Any, Iterable
 from urllib.parse import parse_qs, urljoin, urlparse
 
 import browser_cookie3
