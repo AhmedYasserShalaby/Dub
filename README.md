@@ -26,7 +26,7 @@ End-to-end Arabic dubbing workspace for course videos.
 ## Setup
 
 ```bash
-cd /Users/ahmedyasser/Documents/Dub
+cd Dub
 chmod +x setup.sh dub.py tts_only.py voice_samples.py course_pipeline.py
 ./setup.sh
 source .venv/bin/activate
@@ -45,7 +45,7 @@ Then edit `.env` and fill in:
 Run the full course workflow with:
 
 ```bash
-cd /Users/ahmedyasser/Documents/Dub
+cd Dub
 source .venv/bin/activate
 python course_pipeline.py \
   --course-url "PASTE_COURSE_URL_HERE" \
@@ -85,7 +85,7 @@ Each video work folder now also includes `quality_diagnostics.json`, and the sel
 Run one video through the dubber with:
 
 ```bash
-cd /Users/ahmedyasser/Documents/Dub
+cd Dub
 source .venv/bin/activate
 python dub.py \
   --input "/path/to/video.mp4" \
@@ -145,8 +145,8 @@ Generate comparison clips with:
 
 ```bash
 python voice_samples.py \
-  --input "/Users/ahmedyasser/Documents/Dub/arabic_script.txt" \
-  --out-dir "/Users/ahmedyasser/Documents/Dub/outputs/voice_samples"
+  --input "./arabic_script.txt" \
+  --out-dir "./outputs/voice_samples"
 ```
 
 ## Fastest useful batch settings
@@ -176,7 +176,7 @@ python course_pipeline.py \
 Use the local Codex CLI as a worker agent and let the supervisor verify and retry automatically:
 
 ```bash
-cd /Users/ahmedyasser/Documents/Dub
+cd Dub
 source .venv/bin/activate
 python orchestrate.py run \
   --goal "Make course dubbing work for any supported input course URL" \
